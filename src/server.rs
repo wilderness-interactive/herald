@@ -8,6 +8,7 @@ use rmcp::{
     schemars, tool, tool_handler, tool_router,
 };
 
+use crate::atrium;
 use crate::config::{AccountConfig, AdsGlobalConfig, GoogleConfig};
 use crate::google_ads;
 use crate::google_analytics;
@@ -131,6 +132,16 @@ pub struct AnalyticsCustomParams {
     pub report_json: String,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AtriumDateParams {
+    #[schemars(description = "Account name as configured in herald.toml")]
+    pub account: String,
+    #[schemars(description = "Start date in YYYY-MM-DD format")]
+    pub date_from: String,
+    #[schemars(description = "End date in YYYY-MM-DD format")]
+    pub date_to: String,
+}
+
 // -- MCP Server --
 
 #[derive(Clone)]
@@ -212,8 +223,9 @@ impl HeraldServer {
             .accounts
             .iter()
             .map(|a| {
-                let ga4 = a.ga4_property_id.as_deref().unwrap_or("not configured");
-                format!("- {} (Ads: {}, GA4: {})", a.name, a.customer_id, ga4)
+                let ga4 = a.ga4_property_id.as_deref().unwrap_or("none");
+                let crm = if a.atrium_db.is_some() { "connected" } else { "none" };
+                format!("- {} (Ads: {}, GA4: {}, Atrium: {})", a.name, a.customer_id, ga4, crm)
             })
             .collect();
         Ok(CallToolResult::success(vec![Content::text(
@@ -354,6 +366,73 @@ impl HeraldServer {
             serde_json::to_string_pretty(&data).unwrap_or_default(),
         )]))
     }
+
+    // -- Atrium CRM tools --
+
+    async fn resolve_atrium_db(&self, name: &str) -> Result<String, McpError> {
+        let api = self.api.read().await;
+        api.accounts
+            .iter()
+            .find(|a| a.name.eq_ignore_ascii_case(name))
+            .and_then(|a| a.atrium_db.clone())
+            .ok_or_else(|| {
+                McpError::invalid_params(
+                    format!("No Atrium database configured for account '{name}'. Add atrium_db path to herald.toml."),
+                    None,
+                )
+            })
+    }
+
+    #[tool(description = "Get real confirmed appointments from Atrium with full attribution (source, medium, campaign, landing page, referrer) and patient/treatment details. This is ground truth — actual bookings, not GA4 events. Use this to see which traffic sources produced real patients.")]
+    async fn get_patient_attribution(
+        &self,
+        Parameters(AtriumDateParams { account, date_from, date_to }): Parameters<AtriumDateParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let db_path = self.resolve_atrium_db(&account).await?;
+        let data = tokio::task::spawn_blocking(move || {
+            atrium::patient_attribution(&db_path, &date_from, &date_to)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("Task failed: {e}"), None))?
+        .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&data).unwrap_or_default(),
+        )]))
+    }
+
+    #[tool(description = "Get Atrium bookings aggregated by attribution channel (source/medium). Shows total bookings, confirmed vs cancelled, and total revenue per channel. Use this for closed-loop attribution — real business outcomes per traffic source, not just clicks.")]
+    async fn get_channel_breakdown(
+        &self,
+        Parameters(AtriumDateParams { account, date_from, date_to }): Parameters<AtriumDateParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let db_path = self.resolve_atrium_db(&account).await?;
+        let data = tokio::task::spawn_blocking(move || {
+            atrium::channel_breakdown(&db_path, &date_from, &date_to)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("Task failed: {e}"), None))?
+        .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&data).unwrap_or_default(),
+        )]))
+    }
+
+    #[tool(description = "Get the Atrium lead pipeline — all leads created in a date range with their stage (new, contacted, callback, booked, complete, declined), source, treatment interest, and activity count. Use this to see the full CRM picture including phone leads from Twilio call tracking.")]
+    async fn get_lead_pipeline(
+        &self,
+        Parameters(AtriumDateParams { account, date_from, date_to }): Parameters<AtriumDateParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let db_path = self.resolve_atrium_db(&account).await?;
+        let data = tokio::task::spawn_blocking(move || {
+            atrium::lead_pipeline(&db_path, &date_from, &date_to)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("Task failed: {e}"), None))?
+        .map_err(|e| McpError::internal_error(format!("{e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&data).unwrap_or_default(),
+        )]))
+    }
 }
 
 #[tool_handler]
@@ -365,7 +444,8 @@ impl ServerHandler for HeraldServer {
                  Pulls Google Ads and Google Analytics data for analysis across multiple accounts. \
                  Ads tools: list_changes, get_performance, get_keywords, get_search_terms, run_query. \
                  Analytics tools: get_analytics_traffic, get_analytics_pages, get_analytics_conversions, get_booking_call_events, get_ai_referral_traffic, run_analytics_report. \
-                 Note: booking_click = clicked onto booking form, service_booked = confirmed real booking. \
+                 Atrium CRM tools: get_patient_attribution (real bookings with source data), get_channel_breakdown (bookings per channel), get_lead_pipeline (CRM leads and stages). \
+                 Note: booking_click = clicked onto booking form, service_booked = confirmed real booking. Atrium data is ground truth for actual patients. \
                  Use list_accounts first to see available accounts, then pass the account name to other tools."
                     .into(),
             ),

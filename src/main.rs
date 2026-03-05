@@ -1,3 +1,4 @@
+mod atrium;
 mod auth_flow;
 mod config;
 mod google_ads;
