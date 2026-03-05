@@ -5,7 +5,7 @@ use crate::config::{self, GoogleConfig};
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-const SCOPE: &str = "https://www.googleapis.com/auth/adwords";
+const SCOPE: &str = "https://www.googleapis.com/auth/adwords https://www.googleapis.com/auth/analytics.readonly";
 
 pub async fn run(config_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = config::load_config(config_path)?;

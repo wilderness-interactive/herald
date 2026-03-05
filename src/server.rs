@@ -10,6 +10,7 @@ use rmcp::{
 
 use crate::config::{AccountConfig, AdsGlobalConfig, GoogleConfig};
 use crate::google_ads;
+use crate::google_analytics;
 use crate::google_auth;
 
 // -- Shared connection data --
@@ -72,6 +73,44 @@ pub struct GaqlParams {
     pub query: String,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyticsTrafficParams {
+    #[schemars(description = "Account name as configured in herald.toml")]
+    pub account: String,
+    #[schemars(description = "Start date in YYYY-MM-DD format")]
+    pub date_from: String,
+    #[schemars(description = "End date in YYYY-MM-DD format")]
+    pub date_to: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyticsPagesParams {
+    #[schemars(description = "Account name as configured in herald.toml")]
+    pub account: String,
+    #[schemars(description = "Start date in YYYY-MM-DD format")]
+    pub date_from: String,
+    #[schemars(description = "End date in YYYY-MM-DD format")]
+    pub date_to: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyticsConversionsParams {
+    #[schemars(description = "Account name as configured in herald.toml")]
+    pub account: String,
+    #[schemars(description = "Start date in YYYY-MM-DD format")]
+    pub date_from: String,
+    #[schemars(description = "End date in YYYY-MM-DD format")]
+    pub date_to: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyticsCustomParams {
+    #[schemars(description = "Account name as configured in herald.toml")]
+    pub account: String,
+    #[schemars(description = "GA4 Data API runReport request body as JSON string")]
+    pub report_json: String,
+}
+
 // -- MCP Server --
 
 #[derive(Clone)]
@@ -111,6 +150,29 @@ impl HeraldServer {
             })
     }
 
+    async fn resolve_ga4_property(&self, name: &str) -> Result<String, McpError> {
+        let api = self.api.read().await;
+        api.accounts
+            .iter()
+            .find(|a| a.name.eq_ignore_ascii_case(name))
+            .and_then(|a| a.ga4_property_id.clone())
+            .ok_or_else(|| {
+                McpError::invalid_params(
+                    format!("No GA4 property configured for account '{name}'. Add ga4_property_id to herald.toml."),
+                    None,
+                )
+            })
+    }
+
+    async fn run_ga4_report(&self, account: &str, body: serde_json::Value) -> Result<serde_json::Value, McpError> {
+        let property_id = self.resolve_ga4_property(account).await?;
+        let token = self.get_token().await?;
+        let api = self.api.read().await;
+        google_analytics::run_report(&api.http, &token, &property_id, body)
+            .await
+            .map_err(|e| McpError::internal_error(format!("{e}"), None))
+    }
+
     async fn run_gaql(&self, account: &str, gaql: &str) -> Result<serde_json::Value, McpError> {
         let customer_id = self.resolve_account(account).await?;
         let token = self.get_token().await?;
@@ -129,7 +191,10 @@ impl HeraldServer {
         let lines: Vec<String> = api
             .accounts
             .iter()
-            .map(|a| format!("- {} ({})", a.name, a.customer_id))
+            .map(|a| {
+                let ga4 = a.ga4_property_id.as_deref().unwrap_or("not configured");
+                format!("- {} (Ads: {}, GA4: {})", a.name, a.customer_id, ga4)
+            })
             .collect();
         Ok(CallToolResult::success(vec![Content::text(
             format!("Configured accounts:\n{}", lines.join("\n")),
@@ -194,6 +259,57 @@ impl HeraldServer {
             serde_json::to_string_pretty(&data).unwrap_or_default(),
         )]))
     }
+
+    // -- Google Analytics 4 tools --
+
+    #[tool(description = "Get GA4 traffic overview by channel for a date range. Returns sessions, users, new users, bounce rate, avg session duration, page views, and conversions broken down by channel (organic, paid, direct, referral, etc).")]
+    async fn get_analytics_traffic(
+        &self,
+        Parameters(AnalyticsTrafficParams { account, date_from, date_to }): Parameters<AnalyticsTrafficParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let body = google_analytics::traffic_report(&date_from, &date_to);
+        let data = self.run_ga4_report(&account, body).await?;
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&data).unwrap_or_default(),
+        )]))
+    }
+
+    #[tool(description = "Get GA4 top pages report for a date range. Returns page views, users, avg session duration, bounce rate, and conversions per page path.")]
+    async fn get_analytics_pages(
+        &self,
+        Parameters(AnalyticsPagesParams { account, date_from, date_to }): Parameters<AnalyticsPagesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let body = google_analytics::pages_report(&date_from, &date_to);
+        let data = self.run_ga4_report(&account, body).await?;
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&data).unwrap_or_default(),
+        )]))
+    }
+
+    #[tool(description = "Get GA4 conversions report for a date range. Returns conversion events broken down by channel group.")]
+    async fn get_analytics_conversions(
+        &self,
+        Parameters(AnalyticsConversionsParams { account, date_from, date_to }): Parameters<AnalyticsConversionsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let body = google_analytics::conversions_report(&date_from, &date_to);
+        let data = self.run_ga4_report(&account, body).await?;
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&data).unwrap_or_default(),
+        )]))
+    }
+
+    #[tool(description = "Run a custom GA4 Data API report. Pass a JSON string matching the GA4 runReport request body format. Use this for custom analytics queries.")]
+    async fn run_analytics_report(
+        &self,
+        Parameters(AnalyticsCustomParams { account, report_json }): Parameters<AnalyticsCustomParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let body: serde_json::Value = serde_json::from_str(&report_json)
+            .map_err(|e| McpError::invalid_params(format!("Invalid JSON: {e}"), None))?;
+        let data = self.run_ga4_report(&account, body).await?;
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&data).unwrap_or_default(),
+        )]))
+    }
 }
 
 #[tool_handler]
@@ -202,8 +318,9 @@ impl ServerHandler for HeraldServer {
         ServerInfo {
             instructions: Some(
                 "Herald — sovereign ad intelligence. \
-                 Pulls Google Ads data for analysis across multiple accounts: change history, \
-                 campaign performance, keyword metrics, search terms, and raw GAQL queries. \
+                 Pulls Google Ads and Google Analytics data for analysis across multiple accounts. \
+                 Ads tools: list_changes, get_performance, get_keywords, get_search_terms, run_query. \
+                 Analytics tools: get_analytics_traffic, get_analytics_pages, get_analytics_conversions, run_analytics_report. \
                  Use list_accounts first to see available accounts, then pass the account name to other tools."
                     .into(),
             ),

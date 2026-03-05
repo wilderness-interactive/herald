@@ -26,6 +26,7 @@ pub struct AdsGlobalConfig {
 pub struct AccountConfig {
     pub name: String,
     pub customer_id: String,
+    pub ga4_property_id: Option<String>,
 }
 
 #[derive(Debug)]
