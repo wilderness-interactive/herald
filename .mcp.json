@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "herald": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": ["/c", "E:\\Claude Code\\herald\\target\\debug\\herald.exe"],
+      "cwd": "E:\\Claude Code\\herald"
+    }
+  }
+}
