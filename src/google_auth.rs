@@ -26,12 +26,19 @@ pub async fn fetch_access_token(
     client: &reqwest::Client,
     config: &GoogleConfig,
 ) -> Result<String, AuthError> {
+    let refresh_token = config
+        .refresh_token
+        .as_deref()
+        .ok_or_else(|| AuthError::RequestFailed(
+            "No refresh_token configured. Run 'herald auth' first.".to_owned(),
+        ))?;
+
     let response = client
         .post(TOKEN_URL)
         .form(&[
             ("client_id", config.client_id.as_str()),
             ("client_secret", config.client_secret.as_str()),
-            ("refresh_token", config.refresh_token.as_str()),
+            ("refresh_token", refresh_token),
             ("grant_type", "refresh_token"),
         ])
         .send()

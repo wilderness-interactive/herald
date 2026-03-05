@@ -1,4 +1,4 @@
-use crate::config::AdsConfig;
+use crate::config::AdsGlobalConfig;
 
 const ADS_API_VERSION: &str = "v19";
 
@@ -26,11 +26,12 @@ fn ads_url(customer_id: &str) -> String {
 
 pub async fn query(
     client: &reqwest::Client,
-    config: &AdsConfig,
+    config: &AdsGlobalConfig,
+    customer_id: &str,
     access_token: &str,
     gaql: &str,
 ) -> Result<serde_json::Value, AdsError> {
-    let url = ads_url(&config.customer_id);
+    let url = ads_url(customer_id);
 
     let mut request = client
         .post(&url)
