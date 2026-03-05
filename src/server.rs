@@ -104,6 +104,26 @@ pub struct AnalyticsConversionsParams {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct BookingCallParams {
+    #[schemars(description = "Account name as configured in herald.toml")]
+    pub account: String,
+    #[schemars(description = "Start date in YYYY-MM-DD format")]
+    pub date_from: String,
+    #[schemars(description = "End date in YYYY-MM-DD format")]
+    pub date_to: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AiReferralParams {
+    #[schemars(description = "Account name as configured in herald.toml")]
+    pub account: String,
+    #[schemars(description = "Start date in YYYY-MM-DD format")]
+    pub date_from: String,
+    #[schemars(description = "End date in YYYY-MM-DD format")]
+    pub date_to: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyticsCustomParams {
     #[schemars(description = "Account name as configured in herald.toml")]
     pub account: String,
@@ -298,6 +318,30 @@ impl HeraldServer {
         )]))
     }
 
+    #[tool(description = "Get booking and call engagement events broken down by channel (organic, paid, direct, referral, etc). Returns booking_click (clicked onto booking form), call_click (clicked phone number), service_selected (chose a service), and service_booked (confirmed real booking) with event count and unique users per channel. Use this to compare lead generation across traffic sources.")]
+    async fn get_booking_call_events(
+        &self,
+        Parameters(BookingCallParams { account, date_from, date_to }): Parameters<BookingCallParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let body = google_analytics::booking_call_report(&date_from, &date_to);
+        let data = self.run_ga4_report(&account, body).await?;
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&data).unwrap_or_default(),
+        )]))
+    }
+
+    #[tool(description = "Get traffic and events from AI referral sources (ChatGPT, Copilot, Perplexity, Claude, Gemini). Shows sessions, page views, booking clicks, call clicks, and all other events from AI-driven traffic. Use this to track how much business AI search is sending.")]
+    async fn get_ai_referral_traffic(
+        &self,
+        Parameters(AiReferralParams { account, date_from, date_to }): Parameters<AiReferralParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let body = google_analytics::ai_referral_report(&date_from, &date_to);
+        let data = self.run_ga4_report(&account, body).await?;
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&data).unwrap_or_default(),
+        )]))
+    }
+
     #[tool(description = "Run a custom GA4 Data API report. Pass a JSON string matching the GA4 runReport request body format. Use this for custom analytics queries.")]
     async fn run_analytics_report(
         &self,
@@ -320,7 +364,8 @@ impl ServerHandler for HeraldServer {
                 "Herald — sovereign ad intelligence. \
                  Pulls Google Ads and Google Analytics data for analysis across multiple accounts. \
                  Ads tools: list_changes, get_performance, get_keywords, get_search_terms, run_query. \
-                 Analytics tools: get_analytics_traffic, get_analytics_pages, get_analytics_conversions, run_analytics_report. \
+                 Analytics tools: get_analytics_traffic, get_analytics_pages, get_analytics_conversions, get_booking_call_events, get_ai_referral_traffic, run_analytics_report. \
+                 Note: booking_click = clicked onto booking form, service_booked = confirmed real booking. \
                  Use list_accounts first to see available accounts, then pass the account name to other tools."
                     .into(),
             ),

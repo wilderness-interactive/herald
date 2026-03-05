@@ -105,3 +105,61 @@ pub fn conversions_report(date_from: &str, date_to: &str) -> serde_json::Value {
         }
     })
 }
+
+pub fn booking_call_report(date_from: &str, date_to: &str) -> serde_json::Value {
+    serde_json::json!({
+        "dateRanges": [{ "startDate": date_from, "endDate": date_to }],
+        "dimensions": [
+            { "name": "eventName" },
+            { "name": "sessionDefaultChannelGroup" }
+        ],
+        "metrics": [
+            { "name": "eventCount" },
+            { "name": "totalUsers" }
+        ],
+        "dimensionFilter": {
+            "orGroup": {
+                "expressions": [
+                    { "filter": { "fieldName": "eventName", "stringFilter": { "matchType": "EXACT", "value": "booking_click" }}},
+                    { "filter": { "fieldName": "eventName", "stringFilter": { "matchType": "EXACT", "value": "call_click" }}},
+                    { "filter": { "fieldName": "eventName", "stringFilter": { "matchType": "EXACT", "value": "service_selected" }}},
+                    { "filter": { "fieldName": "eventName", "stringFilter": { "matchType": "EXACT", "value": "service_booked" }}}
+                ]
+            }
+        },
+        "orderBys": [
+            { "dimension": { "dimensionName": "eventName" }},
+            { "metric": { "metricName": "eventCount" }, "desc": true }
+        ]
+    })
+}
+
+pub fn ai_referral_report(date_from: &str, date_to: &str) -> serde_json::Value {
+    serde_json::json!({
+        "dateRanges": [{ "startDate": date_from, "endDate": date_to }],
+        "dimensions": [
+            { "name": "sessionSource" },
+            { "name": "eventName" }
+        ],
+        "metrics": [
+            { "name": "eventCount" },
+            { "name": "totalUsers" }
+        ],
+        "dimensionFilter": {
+            "orGroup": {
+                "expressions": [
+                    { "filter": { "fieldName": "sessionSource", "stringFilter": { "matchType": "CONTAINS", "value": "chatgpt" }}},
+                    { "filter": { "fieldName": "sessionSource", "stringFilter": { "matchType": "CONTAINS", "value": "openai" }}},
+                    { "filter": { "fieldName": "sessionSource", "stringFilter": { "matchType": "CONTAINS", "value": "copilot" }}},
+                    { "filter": { "fieldName": "sessionSource", "stringFilter": { "matchType": "CONTAINS", "value": "perplexity" }}},
+                    { "filter": { "fieldName": "sessionSource", "stringFilter": { "matchType": "CONTAINS", "value": "claude" }}},
+                    { "filter": { "fieldName": "sessionSource", "stringFilter": { "matchType": "CONTAINS", "value": "gemini" }}}
+                ]
+            }
+        },
+        "orderBys": [
+            { "dimension": { "dimensionName": "sessionSource" }},
+            { "metric": { "metricName": "eventCount" }, "desc": true }
+        ]
+    })
+}
